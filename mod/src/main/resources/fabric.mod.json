@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "minecraft-codex",
+  "version": "${version}",
+  "name": "Minecraft Codex",
+  "description": "A private Minecraft client interface for Codex.",
+  "authors": ["Minecraft Codex"],
+  "license": "All-Rights-Reserved",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.minecraftcodex.client.MinecraftCodexClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "~26.1.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}

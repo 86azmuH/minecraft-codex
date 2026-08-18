@@ -3,3 +3,8 @@
 .vs/
 *.user
 *.suo
+.tools/
+.gradle/
+mod/.gradle/
+mod/build/
+mod/run/

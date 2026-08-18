@@ -6,7 +6,15 @@ Minecraft Codex is a Windows-first, client-side Minecraft Java mod that brings C
 
 The experience will have two connected interfaces. The first version will turn the normal Minecraft chat box into a private Codex conversation. Later versions will add a dedicated, non-pausing workspace screen for the complete project and chat experience. Both interfaces will connect to the same Codex sessions through a local companion process.
 
-This document records the complete product direction and every decision established during initial planning. It is the authoritative starting point for implementation until a newer project decision document supersedes it.
+This document is the authoritative product baseline. Current implementation state, operations, and newer architectural decisions are maintained under [`docs/project/`](docs/project/).
+
+## Current implementation checkpoint
+
+- The Windows C# companion is implemented with a same-user named-pipe bootstrap, authenticated IPv4-loopback WebSocket transport, read-only Codex execution, reconnectable in-memory snapshots, and idle shutdown.
+- The Minecraft 26.1.2 Fabric client foundation is implemented with private `/codex on`, `/codex off`, and `/codex status` commands plus a hotbar-adjacent `[ CODEX ]` badge.
+- The built mod has been verified in-game through Prism Launcher: it launches or attaches to the companion, verifies the pipe server executable, authenticates the WebSocket, and retrieves a snapshot without blocking Minecraft's game thread.
+- The current bridge emits complete `message.completed` responses rather than token deltas; progressive rendering remains a future chat-mode capability.
+- Codex mode, private ordinary-chat interception, single-task submission, complete-response rendering, and lifecycle safety are implemented. Chat selection, token streaming, and the dedicated workspace remain unimplemented.
 
 ## Project goals
 
@@ -25,7 +33,7 @@ The project should:
 
 ### Minecraft target
 
-- Minecraft Java Edition 26.1.
+- Minecraft Java Edition 26.1.2 for the current development checkpoint.
 - Fabric mod loader.
 - Client-side mod.
 - Single-player is the primary use case.
@@ -58,7 +66,7 @@ Initial behavior:
 - A local command such as `/codex off` disables Codex mode.
 - While enabled, ordinary messages typed into Minecraft chat are intercepted locally and routed privately to the active Codex chat.
 - Codex prompts, commands, menus, and responses must never be sent to the Minecraft server or shown to other players.
-- Codex responses appear progressively as private client-side chat messages with a clear Codex label.
+- Codex responses appear as private client-side chat messages with a clear Codex label. The current bridge delivers complete messages rather than token deltas.
 - Long responses are divided into readable chat-sized sections.
 - Longer Codex reports should end with a short plain-language summary when available, without replacing or hiding the complete response.
 - The chat input has a clearly different appearance while Codex mode is active, with a prominent `CODEX MODE` indicator.
@@ -210,7 +218,7 @@ Some richer Codex app-server and cloud interfaces are experimental and may chang
 
 The Minecraft mod and companion communicate only on the local computer.
 
-The eventual protocol should:
+Protocol version 1 currently uses a current-user-only Windows named pipe to mint one-minute, one-use capabilities for an IPv4-loopback WebSocket. It:
 
 - Use a local-only transport.
 - Authenticate each Minecraft client connection with a short-lived capability or equivalent local secret created specifically for the companion session.
@@ -220,7 +228,7 @@ The eventual protocol should:
 - Reject unsupported messages safely.
 - Never transfer Codex login tokens to the Minecraft process.
 
-The exact transport and wire format remain implementation decisions. A versioned JSON message protocol over loopback WebSocket or another Windows-safe local transport is a likely option.
+The implemented JSON protocol supports `task.start`, `task.snapshot`, and `task.cancel`, plus normalized task events. It remains intentionally small and may evolve through explicit protocol versions.
 
 ## Permissions and security
 
@@ -345,8 +353,8 @@ The following are not yet finalized:
 
 - Exact screen layout and visual design.
 - Default keybindings.
-- Companion implementation language and packaging method.
-- Exact local transport and protocol schema.
+- Companion release packaging and installed-location discovery. The implementation language is C#.
+- Future protocol additions beyond the implemented named-pipe plus WebSocket version 1 contract.
 - Exact Codex app-server/cloud adapter APIs supported by the first prototype.
 - Whether completed companion tasks produce Windows notifications after Minecraft closes.
 - Search, filtering, pinning, and sorting behavior for large chat inventories.
@@ -357,7 +365,7 @@ The following are not yet finalized:
 
 ## Proposed development sequence
 
-### Phase 1: Integration spike
+### Phase 1: Integration spike — completed for the read-only bridge
 
 - Confirm the installed Codex CLI can be located and invoked from an ordinary companion process.
 - Test ChatGPT-authenticated `codex exec` behavior.
@@ -367,7 +375,7 @@ The following are not yet finalized:
 - Document actual event schemas and version behavior.
 - Prove trusted-working-directory enforcement.
 
-### Phase 2: Companion prototype
+### Phase 2: Companion prototype — core transport completed
 
 - Implement companion lifecycle.
 - Implement local authenticated transport.
@@ -377,17 +385,17 @@ The following are not yet finalized:
 - Persist reconnectable task state.
 - Add structured sanitized logs.
 
-### Phase 3: Minecraft chat interface prototype
+### Phase 3: Minecraft chat interface prototype — in progress
 
-- Create the Fabric 26.1 client mod.
-- Register local `/codex on`, `/codex off`, and `/codex status` commands.
-- Intercept ordinary chat input locally while Codex mode is enabled.
-- Render streamed Codex responses as labeled private client-side chat messages.
-- Add a clear `CODEX MODE` indicator and visually distinct input state.
-- Reset Codex mode on every world or server transition.
-- Connect to the companion.
-- Stream messages without blocking Minecraft's render or game thread.
-- Display connection and task errors safely.
+- Create the Fabric 26.1.2 client mod. **Completed.**
+- Register local `/codex on`, `/codex off`, and `/codex status` commands. **Completed.**
+- Intercept ordinary chat input locally while Codex mode is enabled. **Implemented; multiplayer verification remains.**
+- Render complete Codex responses as labeled private client-side chat messages. **Implemented; token streaming remains future work.**
+- Add a clear `CODEX MODE` indicator and visually distinct input state. **The hotbar badge is completed; chat-input styling remains.**
+- Reset Codex mode on every world or server transition. **Completed in the client state layer.**
+- Connect to the companion. **Completed for startup and snapshots.**
+- Stream messages without blocking Minecraft's render or game thread. **The asynchronous transport boundary is completed; prompt and response flow remain.**
+- Display connection and task errors safely. **Basic status errors are completed; task errors remain.**
 - Verify that no prompt or Codex command can reach multiplayer chat.
 
 ### Phase 4: Command-driven chat selection
@@ -425,10 +433,10 @@ The following are not yet finalized:
 
 ## First implementation checkpoint
 
-Before building chat selection or the full workspace UI, the project should prove this narrow vertical slice:
+Before building chat selection or the full workspace UI, the project should prove this narrow vertical slice. Companion launch and status connectivity are complete; the remaining items define the chat-mode milestone:
 
-1. Minecraft launches the companion.
-2. The companion locates the authenticated Codex installation.
+1. Minecraft launches the companion. **Completed.**
+2. The companion locates the authenticated Codex installation. **Completed.**
 3. The player enables private Codex mode through a local command.
 4. The mod intercepts a normal chat message and sends it as a prompt for the configured trusted working directory without transmitting it to the Minecraft server.
 5. Codex streams a labeled response back as private client-side Minecraft chat messages.
@@ -447,12 +455,12 @@ This vertical slice is the first meaningful definition of success.
 When starting a new Codex chat for this project:
 
 1. Select the cloned `Minecraft Codex` repository as the working folder.
-2. Ask Codex to read this `README.md` completely before proposing or making changes.
-3. Treat this file as the current product baseline.
+2. Ask Codex to read this `README.md`, `docs/project/PROJECT.md`, and the relevant component file before proposing or making changes.
+3. Treat this file as the product baseline and `docs/project/` as the current implementation memory.
 4. Record new material decisions in project documentation instead of relying only on chat history.
 5. Do not broaden permissions or access credential files without explicit user approval.
-6. Begin with the integration spike and first implementation checkpoint unless the user chooses a different planning task.
+6. Continue from the next handoff in `docs/project/components/fabric-mod.md` unless the user chooses a different planning task.
 
 A suitable first prompt is:
 
-> Read `README.md` completely and treat it as the authoritative project baseline. We are continuing the Minecraft Codex project. First inspect the empty project workspace and the locally installed Codex CLI without changing anything. Then propose a concrete implementation blueprint for the Phase 1 integration spike and the first vertical slice. Preserve the permission and credential boundaries in the README. Do not begin implementation until I approve the blueprint.
+> Read `README.md`, `docs/project/PROJECT.md`, and `docs/project/components/fabric-mod.md`. We are continuing Minecraft Codex from the verified Fabric status checkpoint. Preserve the permission and credential boundaries, inspect the current implementation, and continue from the component's next handoff. Do not broaden permissions or begin unrelated phases.

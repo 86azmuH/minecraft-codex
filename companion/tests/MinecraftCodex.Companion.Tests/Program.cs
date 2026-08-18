@@ -3,12 +3,23 @@ using MinecraftCodex.Companion.Codex;
 using MinecraftCodex.Companion.Tasks;
 using MinecraftCodex.Companion.Server;
 using System.IO.Pipes;
+using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 
 var profile = TrustedPathPolicy.ResolveUserProfile();
 var trustedRoot = Path.Combine(profile, "SyncHub", "Projects");
 var policy = TrustedPathPolicy.CreateDefault();
 var failures = new List<string>();
+
+var encodedStartInfo = CodexProcessEncoding.Apply(new ProcessStartInfo());
+if (encodedStartInfo.StandardInputEncoding?.CodePage != Encoding.UTF8.CodePage ||
+    encodedStartInfo.StandardOutputEncoding?.CodePage != Encoding.UTF8.CodePage ||
+    encodedStartInfo.StandardErrorEncoding?.CodePage != Encoding.UTF8.CodePage)
+    failures.Add("Codex process encoding: redirected streams were not configured as UTF-8");
+var curlyText = "I’m ready — what’s next?";
+if (encodedStartInfo.StandardOutputEncoding?.GetString(Encoding.UTF8.GetBytes(curlyText)) != curlyText)
+    failures.Add("Codex process encoding: UTF-8 punctuation was not preserved");
 
 var leasePipeName = $"minecraft-codex-lease-test-{Guid.NewGuid():N}";
 var leaseRuntimeDirectory = Path.Combine(Path.GetTempPath(), $"minecraft-codex-lease-tests-{Guid.NewGuid():N}");

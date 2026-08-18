@@ -58,7 +58,7 @@ public sealed class CodexCliDiscovery
 
             using var process = new Process
             {
-                StartInfo = new ProcessStartInfo
+                StartInfo = CodexProcessEncoding.Apply(new ProcessStartInfo
                 {
                     FileName = executable,
                     Arguments = "--version",
@@ -66,7 +66,7 @@ public sealed class CodexCliDiscovery
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     CreateNoWindow = true
-                }
+                })
             };
 
             process.Start();
@@ -163,7 +163,7 @@ public sealed class CodexCliDiscovery
         {
             using var process = new Process
             {
-                StartInfo = new ProcessStartInfo
+                StartInfo = CodexProcessEncoding.Apply(new ProcessStartInfo
                 {
                     FileName = executable,
                     Arguments = "login status",
@@ -171,7 +171,7 @@ public sealed class CodexCliDiscovery
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     CreateNoWindow = true
-                }
+                })
             };
             process.Start();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

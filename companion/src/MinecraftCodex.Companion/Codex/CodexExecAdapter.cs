@@ -62,7 +62,7 @@ public sealed class CodexExecAdapter : ICodexTaskAdapter
 
     private ProcessStartInfo CreateStartInfo(string workingDirectory)
     {
-        var info = new ProcessStartInfo
+        var info = CodexProcessEncoding.Apply(new ProcessStartInfo
         {
             FileName = executablePath,
             UseShellExecute = false,
@@ -70,7 +70,7 @@ public sealed class CodexExecAdapter : ICodexTaskAdapter
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true
-        };
+        });
         info.ArgumentList.Add("exec");
         info.ArgumentList.Add("--json");
         info.ArgumentList.Add("--sandbox");

@@ -35,7 +35,7 @@ An exclusive non-secret lock under the current user's LocalAppData prevents two 
 
 ### Task registry and Codex adapter
 
-The registry prevents duplicate starts and stores ordered events. The adapter sends prompts to Codex through stdin, drains process output, and normalizes supported JSONL events.
+The registry prevents duplicate starts and stores ordered events. The adapter sends prompts to Codex through stdin, drains process output, and normalizes supported JSONL events. All redirected Codex subprocess streams use strict UTF-8 so Unicode punctuation survives the Windows process boundary.
 
 ### Standalone client
 

@@ -53,3 +53,9 @@
 - **Why it matters:** A player can now hold the first private Codex exchange from normal Minecraft chat without changing slash-command behavior.
 - **Verified by:** Clean Gradle unit/build suite and an opt-in real companion integration test that submitted a task and received its `message.completed` result. Fabric/Minecraft bytecode inspection confirmed `ALLOW_CHAT=false` cancels before chat signing and packet construction.
 - **Still open:** Prism visual testing and real multiplayer non-disclosure verification; the companion still returns complete messages rather than token deltas.
+## 2026-08-18 — Preserve Unicode in Codex responses
+
+- **Completed:** Explicitly configured the Codex CLI subprocess input, output, and error streams as strict UTF-8.
+- **Why it matters:** Curly apostrophes and other Unicode punctuation now survive the Windows companion boundary instead of appearing as mojibake such as `ΓÇÖ` in Minecraft chat.
+- **Verified by:** Companion regression coverage for UTF-8 stream configuration and punctuation round-tripping, plus the full companion test suite and release build.
+- **Still open:** Replace the Prism companion executable and visually confirm Unicode punctuation in Minecraft.

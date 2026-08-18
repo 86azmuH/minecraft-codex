@@ -2,11 +2,61 @@ using MinecraftCodex.Companion.Security;
 using MinecraftCodex.Companion.Codex;
 using MinecraftCodex.Companion.Tasks;
 using MinecraftCodex.Companion.Server;
+using System.IO.Pipes;
+using System.Text.Json;
 
 var profile = TrustedPathPolicy.ResolveUserProfile();
 var trustedRoot = Path.Combine(profile, "SyncHub", "Projects");
 var policy = TrustedPathPolicy.CreateDefault();
 var failures = new List<string>();
+
+var leasePipeName = $"minecraft-codex-lease-test-{Guid.NewGuid():N}";
+var leaseRuntimeDirectory = Path.Combine(Path.GetTempPath(), $"minecraft-codex-lease-tests-{Guid.NewGuid():N}");
+using (var firstLease = CompanionInstanceLease.TryAcquire(leasePipeName, leaseRuntimeDirectory))
+using (var secondLease = CompanionInstanceLease.TryAcquire(leasePipeName, leaseRuntimeDirectory))
+{
+    if (!firstLease.IsOwner || secondLease.IsOwner)
+        failures.Add("instance lease: simultaneous duplicate owner was allowed");
+}
+using (var replacementLease = CompanionInstanceLease.TryAcquire(leasePipeName, leaseRuntimeDirectory))
+{
+    if (!replacementLease.IsOwner)
+        failures.Add("instance lease: ownership was not released for replacement");
+}
+try
+{
+    var leaseFile = Path.Combine(leaseRuntimeDirectory, $"{leasePipeName}.lock");
+    if (File.Exists(leaseFile)) File.Delete(leaseFile);
+    if (Directory.Exists(leaseRuntimeDirectory)) Directory.Delete(leaseRuntimeDirectory);
+}
+catch (Exception ex)
+{
+    failures.Add($"instance lease: test runtime cleanup failed ({ex.GetType().Name})");
+}
+if (Directory.Exists(leaseRuntimeDirectory))
+    failures.Add("instance lease: test runtime directory was retained");
+
+if (OperatingSystem.IsWindows())
+{
+    var identityPipeName = $"minecraft-codex-identity-test-{Guid.NewGuid():N}";
+    await using var identityServer = new NamedPipeServerStream(identityPipeName, PipeDirection.InOut, 1,
+        PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+    var identityWait = identityServer.WaitForConnectionAsync();
+    await using var identityClient = new NamedPipeClientStream(".", identityPipeName, PipeDirection.InOut,
+        PipeOptions.Asynchronous);
+    await identityClient.ConnectAsync();
+    await identityWait;
+    var currentExecutable = Environment.ProcessPath ??
+                            throw new InvalidOperationException("Test process executable path is unavailable.");
+    try { NamedPipeServerIdentity.VerifyExecutable(identityClient, currentExecutable); }
+    catch (Exception ex) { failures.Add($"pipe identity: expected server was rejected ({ex.Message})"); }
+    try
+    {
+        NamedPipeServerIdentity.VerifyExecutable(identityClient, Path.Combine(Path.GetTempPath(), "not-the-server.exe"));
+        failures.Add("pipe identity: unexpected server executable was accepted");
+    }
+    catch (InvalidOperationException) { }
+}
 
 Expect("trusted root", policy.EvaluateWorkingDirectory(trustedRoot), PathStatus.Trusted);
 Expect("trusted child", policy.EvaluateWorkingDirectory(Path.Combine(trustedRoot, "Minecraft Codex")), PathStatus.Trusted);
@@ -48,16 +98,53 @@ if (registrySnapshot?.State != CompanionTaskState.Completed)
     failures.Add("snapshot: completed fake task state was not retained");
 
 var now = DateTimeOffset.UtcNow;
-var gate = new CapabilityGate("correct-capability", now.AddMinutes(1));
-if (gate.TryConsume("wrong-capability", now))
+var capabilities = new CapabilityStore();
+var validCapability = capabilities.Mint(now, TimeSpan.FromMinutes(1)) ?? throw new InvalidOperationException("Capability test store was unexpectedly full.");
+if (capabilities.TryConsume("wrong-capability", now))
     failures.Add("capability: incorrect secret was accepted");
-if (!gate.TryConsume("correct-capability", now))
+if (!capabilities.TryConsume(validCapability, now))
     failures.Add("capability: valid secret was rejected");
-if (gate.TryConsume("correct-capability", now))
+if (capabilities.TryConsume(validCapability, now))
     failures.Add("capability: valid secret was reusable");
-var expiredGate = new CapabilityGate("expired", now.AddSeconds(-1));
-if (expiredGate.TryConsume("expired", now))
+var expiredCapability = capabilities.Mint(now.AddMinutes(-2), TimeSpan.FromMinutes(1)) ?? throw new InvalidOperationException("Capability test store was unexpectedly full.");
+if (capabilities.TryConsume(expiredCapability, now))
     failures.Add("capability: expired secret was accepted");
+
+var brokerStore = new CapabilityStore();
+var brokerPipeName = $"minecraft-codex-test-{Guid.NewGuid():N}";
+var broker = new BootstrapBroker(brokerPipeName, brokerStore, "ws://127.0.0.1:12345/v1/ws");
+using var brokerCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+var brokerTask = broker.RunAsync(brokerCancellation.Token);
+var invalidBrokerResponse = await RequestBrokerAsync(brokerPipeName, "{\"protocolVersion\":2,\"type\":\"capability.request\"}", brokerCancellation.Token);
+var firstBrokerCapability = await RequestBrokerAsync(brokerPipeName, "{\"protocolVersion\":1,\"type\":\"capability.request\"}", brokerCancellation.Token);
+var secondBrokerCapability = await RequestBrokerAsync(brokerPipeName, "{\"protocolVersion\":1,\"type\":\"capability.request\"}", brokerCancellation.Token);
+if (invalidBrokerResponse.Capability is not null || invalidBrokerResponse.Error != "invalid request")
+    failures.Add("bootstrap broker: invalid protocol request was accepted");
+if (string.IsNullOrWhiteSpace(firstBrokerCapability.Capability) ||
+    string.IsNullOrWhiteSpace(secondBrokerCapability.Capability) ||
+    firstBrokerCapability.Capability == secondBrokerCapability.Capability)
+    failures.Add("bootstrap broker: fresh capabilities were not minted");
+else if (!brokerStore.TryConsume(firstBrokerCapability.Capability, DateTimeOffset.UtcNow) ||
+         !brokerStore.TryConsume(secondBrokerCapability.Capability, DateTimeOffset.UtcNow))
+    failures.Add("bootstrap broker: minted capabilities could not be consumed");
+
+await using (var stalledPipe = new NamedPipeClientStream(".", brokerPipeName, PipeDirection.InOut, PipeOptions.Asynchronous))
+{
+    await stalledPipe.ConnectAsync(brokerCancellation.Token);
+    var afterStall = await RequestBrokerAsync(brokerPipeName,
+        "{\"protocolVersion\":1,\"type\":\"capability.request\"}", brokerCancellation.Token);
+    if (string.IsNullOrWhiteSpace(afterStall.Capability))
+        failures.Add("bootstrap broker: stalled client prevented a later capability request");
+}
+
+var boundedStore = new CapabilityStore();
+var minted = Enumerable.Range(0, 16).Select(_ => boundedStore.Mint(now, TimeSpan.FromMinutes(1))).ToArray();
+if (minted.Any(string.IsNullOrWhiteSpace) || boundedStore.Mint(now, TimeSpan.FromMinutes(1)) is not null)
+    failures.Add("capability: outstanding capability bound was not enforced");
+brokerCancellation.Cancel();
+try { await brokerTask; } catch (OperationCanceledException) { }
+
+await BridgeServerTests.RunAsync(policy, trustedRoot, failures);
 
 if (failures.Count == 0)
 {
@@ -75,6 +162,20 @@ void Expect(string name, PathDecision actual, PathStatus expected)
         failures.Add($"{name}: expected {expected}, received {actual.Status} ({actual.Reason})");
 }
 
+static async Task<BrokerResponse> RequestBrokerAsync(string pipeName, string request,
+    CancellationToken cancellationToken)
+{
+    await using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+    await pipe.ConnectAsync(cancellationToken);
+    using var reader = new StreamReader(pipe, leaveOpen: true);
+    await using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
+    await writer.WriteLineAsync(request);
+    var response = await reader.ReadLineAsync(cancellationToken);
+    return response is null
+        ? new(0, null, "missing response")
+        : JsonSerializer.Deserialize<BrokerResponse>(response, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+}
+
 sealed class FakeAdapter : ICodexTaskAdapter
 {
     private int executionCount;
@@ -90,3 +191,5 @@ sealed class FakeAdapter : ICodexTaskAdapter
         return Task.CompletedTask;
     }
 }
+
+sealed record BrokerResponse(int ProtocolVersion, string? Capability, string? Error);

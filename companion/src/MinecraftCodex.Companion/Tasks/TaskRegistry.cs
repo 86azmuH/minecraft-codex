@@ -15,8 +15,15 @@ public sealed class TaskRegistry
     private readonly string defaultWorkingDirectory;
     private readonly ConcurrentDictionary<string, TaskRun> tasks = new();
     private readonly ConcurrentDictionary<string, RequestRegistration> requestTasks = new();
+    private readonly ConcurrentDictionary<string, Task> executions = new();
+    private readonly object lifecycleGate = new();
     private readonly object subscriberLock = new();
     private readonly List<Channel<ProtocolMessage>> subscribers = [];
+    private int stopping;
+    private int activeCount;
+
+    public event Action<int>? ActiveCountChanged;
+    public int ActiveCount => Volatile.Read(ref activeCount);
 
     public TaskRegistry(ICodexTaskAdapter adapter, TrustedPathPolicy pathPolicy, string defaultWorkingDirectory)
     {
@@ -45,31 +52,39 @@ public sealed class TaskRegistry
 
     public (bool Accepted, string Message, string? TaskId) Start(string requestId, StartTaskPayload payload)
     {
-        if (requestId.Length > 128)
-            return (false, "request ID is too long", null);
-        if (string.IsNullOrWhiteSpace(payload.Prompt) || payload.Prompt.Length > 32_768)
-            return (false, "prompt must contain between 1 and 32768 characters", null);
+        lock (lifecycleGate)
+        {
+            if (stopping != 0)
+                return (false, "companion is stopping", null);
+            if (requestId.Length > 128)
+                return (false, "request ID is too long", null);
+            if (string.IsNullOrWhiteSpace(payload.Prompt) || payload.Prompt.Length > 32_768)
+                return (false, "prompt must contain between 1 and 32768 characters", null);
 
-        var decision = pathPolicy.EvaluateWorkingDirectory(payload.WorkingDirectory ?? defaultWorkingDirectory);
-        if (decision.Status != PathStatus.Trusted || decision.CanonicalPath is null)
-            return (false, decision.Reason, null);
+            var decision = pathPolicy.EvaluateWorkingDirectory(payload.WorkingDirectory ?? defaultWorkingDirectory);
+            if (decision.Status != PathStatus.Trusted || decision.CanonicalPath is null)
+                return (false, decision.Reason, null);
 
-        var fingerprint = Fingerprint(payload.Prompt, decision.CanonicalPath);
-        if (requestTasks.TryGetValue(requestId, out var existing))
-            return existing.Fingerprint == fingerprint
-                ? (true, "request already accepted", existing.TaskId)
-                : (false, "request ID was reused with different content", null);
-        if (tasks.Count >= 8)
-            return (false, "companion task limit reached", null);
+            var fingerprint = Fingerprint(payload.Prompt, decision.CanonicalPath);
+            if (requestTasks.TryGetValue(requestId, out var existing))
+                return existing.Fingerprint == fingerprint
+                    ? (true, "request already accepted", existing.TaskId)
+                    : (false, "request ID was reused with different content", null);
+            if (tasks.Count >= 8)
+                return (false, "companion task limit reached", null);
 
-        var taskId = Guid.NewGuid().ToString("N");
-        if (!requestTasks.TryAdd(requestId, new(taskId, fingerprint)))
-            return Start(requestId, payload);
-
-        var run = new TaskRun(taskId, Publish);
-        tasks[taskId] = run;
-        _ = Task.Run(() => RunAdapterAsync(run, payload.Prompt, decision.CanonicalPath), CancellationToken.None);
-        return (true, "task accepted", taskId);
+            var taskId = Guid.NewGuid().ToString("N");
+            requestTasks[requestId] = new(taskId, fingerprint);
+            var run = new TaskRun(taskId, Publish);
+            tasks[taskId] = run;
+            var newActiveCount = Interlocked.Increment(ref activeCount);
+            ActiveCountChanged?.Invoke(newActiveCount);
+            var execution = Task.Run(() => RunAdapterAsync(run, payload.Prompt, decision.CanonicalPath), CancellationToken.None);
+            executions[taskId] = execution;
+            _ = execution.ContinueWith(ignored => executions.TryRemove(taskId, out _), CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            return (true, "task accepted", taskId);
+        }
     }
 
     private async Task RunAdapterAsync(TaskRun run, string prompt, string workingDirectory)
@@ -77,6 +92,11 @@ public sealed class TaskRegistry
         try { await adapter.RunAsync(run, prompt, workingDirectory, pathPolicy, run.CancellationToken); }
         catch (OperationCanceledException) { run.Fail("cancelled", cancelled: true); }
         catch (Exception) { run.Fail("unexpectedAdapterFailure"); }
+        finally
+        {
+            var newActiveCount = Interlocked.Decrement(ref activeCount);
+            ActiveCountChanged?.Invoke(newActiveCount);
+        }
     }
 
     public bool Cancel(string taskId) => tasks.TryGetValue(taskId, out var task) && task.Cancel();
@@ -84,6 +104,18 @@ public sealed class TaskRegistry
     public void CancelAll()
     {
         foreach (var task in tasks.Values) task.Cancel();
+    }
+
+    public async Task ShutdownAsync(CancellationToken cancellationToken)
+    {
+        Task[] active;
+        lock (lifecycleGate)
+        {
+            stopping = 1;
+            CancelAll();
+            active = executions.Values.ToArray();
+        }
+        if (active.Length > 0) await Task.WhenAll(active).WaitAsync(cancellationToken);
     }
 
     private void Publish(ProtocolMessage message)

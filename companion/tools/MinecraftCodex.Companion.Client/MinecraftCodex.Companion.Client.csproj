@@ -6,4 +6,7 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MinecraftCodex.Companion\MinecraftCodex.Companion.csproj" />
+  </ItemGroup>
 </Project>

@@ -1,4 +1,6 @@
-# Phase 1 integration spike
+# Phase 1 integration spike (historical checkpoint)
+
+This document preserves the evidence gathered during the initial Codex integration investigation. For current implementation state, read [`../project/PROJECT.md`](../project/PROJECT.md), the component files, and [`companion-bridge.md`](companion-bridge.md).
 
 ## Current findings
 
@@ -35,11 +37,18 @@ An explicit CLI path can be tested with `--codex <path>`, but unverified explici
 - Known credential paths are denied.
 - UNC/device paths and existing paths containing reparse points are denied until a later resolver can prove their final targets remain trusted.
 
-The Minecraft UI is not yet implemented and will not be treated as a security boundary. All path checks live in the companion.
+At the time of this spike, the Minecraft UI was not implemented. The later Fabric status client does not alter this security model: all path and Codex-execution checks remain in the companion.
 
-## Remaining spike gates
+## Outcome and remaining research
 
-1. Expand the normalized event adapter beyond the minimal successful JSONL lifecycle.
-2. Probe App Server schemas and cloud-task listing for CLI `0.147.0` without persisting sensitive payloads.
-3. Resolve final Windows filesystem targets with handle-based checks and repeat authorization at process launch.
-4. Convert capability results into version-aware adapters before adding Minecraft transport.
+Completed after this spike:
+
+- The minimal Codex lifecycle was normalized into task and message events.
+- The authenticated named-pipe and WebSocket transport was implemented and tested through both the standalone client and Fabric status client.
+- Version 1 request, snapshot, cancellation, sequencing, and reconnection behavior was implemented.
+
+Still open:
+
+1. Probe App Server schemas and cloud-task listing without persisting sensitive payloads.
+2. Resolve final Windows filesystem targets with handle-based checks and repeat authorization at process launch before enabling workspace writes.
+3. Add version-aware richer Codex adapters while retaining the current read-only `codex exec` fallback.

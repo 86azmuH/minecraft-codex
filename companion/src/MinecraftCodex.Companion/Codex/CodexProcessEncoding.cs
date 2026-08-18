@@ -11,9 +11,9 @@ internal static class CodexProcessEncoding
 
     internal static ProcessStartInfo Apply(ProcessStartInfo startInfo)
     {
-        startInfo.StandardInputEncoding = Utf8;
-        startInfo.StandardOutputEncoding = Utf8;
-        startInfo.StandardErrorEncoding = Utf8;
+        if (startInfo.RedirectStandardInput) startInfo.StandardInputEncoding = Utf8;
+        if (startInfo.RedirectStandardOutput) startInfo.StandardOutputEncoding = Utf8;
+        if (startInfo.RedirectStandardError) startInfo.StandardErrorEncoding = Utf8;
         return startInfo;
     }
 }

@@ -12,7 +12,12 @@ var trustedRoot = Path.Combine(profile, "SyncHub", "Projects");
 var policy = TrustedPathPolicy.CreateDefault();
 var failures = new List<string>();
 
-var encodedStartInfo = CodexProcessEncoding.Apply(new ProcessStartInfo());
+var encodedStartInfo = CodexProcessEncoding.Apply(new ProcessStartInfo
+{
+    RedirectStandardInput = true,
+    RedirectStandardOutput = true,
+    RedirectStandardError = true
+});
 if (encodedStartInfo.StandardInputEncoding?.CodePage != Encoding.UTF8.CodePage ||
     encodedStartInfo.StandardOutputEncoding?.CodePage != Encoding.UTF8.CodePage ||
     encodedStartInfo.StandardErrorEncoding?.CodePage != Encoding.UTF8.CodePage)
@@ -20,6 +25,15 @@ if (encodedStartInfo.StandardInputEncoding?.CodePage != Encoding.UTF8.CodePage |
 var curlyText = "I’m ready — what’s next?";
 if (encodedStartInfo.StandardOutputEncoding?.GetString(Encoding.UTF8.GetBytes(curlyText)) != curlyText)
     failures.Add("Codex process encoding: UTF-8 punctuation was not preserved");
+var outputOnlyStartInfo = CodexProcessEncoding.Apply(new ProcessStartInfo
+{
+    RedirectStandardOutput = true,
+    RedirectStandardError = true
+});
+if (outputOnlyStartInfo.StandardInputEncoding is not null ||
+    outputOnlyStartInfo.StandardOutputEncoding?.CodePage != Encoding.UTF8.CodePage ||
+    outputOnlyStartInfo.StandardErrorEncoding?.CodePage != Encoding.UTF8.CodePage)
+    failures.Add("Codex process encoding: non-redirected input was incorrectly configured");
 
 var leasePipeName = $"minecraft-codex-lease-test-{Guid.NewGuid():N}";
 var leaseRuntimeDirectory = Path.Combine(Path.GetTempPath(), $"minecraft-codex-lease-tests-{Guid.NewGuid():N}");

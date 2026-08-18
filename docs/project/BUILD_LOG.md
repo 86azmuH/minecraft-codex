@@ -59,3 +59,4 @@
 - **Why it matters:** Curly apostrophes and other Unicode punctuation now survive the Windows companion boundary instead of appearing as mojibake such as `ΓÇÖ` in Minecraft chat.
 - **Verified by:** Companion regression coverage for UTF-8 stream configuration and punctuation round-tripping, plus the full companion test suite and release build.
 - **Still open:** Replace the Prism companion executable and visually confirm Unicode punctuation in Minecraft.
+- **Follow-up fix:** Restrict explicit encodings to redirected streams; configuring stdin encoding on version/login probes with unredirected stdin prevented the authenticated CLI from being discovered.

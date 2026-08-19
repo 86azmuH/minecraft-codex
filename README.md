@@ -1,4 +1,4 @@
-# Minecraft Codex
+# Minecraft Codex (V1)
 
 ## Introduction
 
